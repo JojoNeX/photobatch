@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhotoBatch — Traitement par lot + Floutage</title>
+<meta name="theme-color" content="#1a1a2e">
+<link rel="manifest" href="data:application/manifest+json,{}">
+<style>
+:root {
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --border: #2a2a4a;
+  --text: #e0e0f0;
+  --muted: #8888aa;
+  --accent: #6c63ff;
+  --accent-glow: #8b83ff;
+  --danger: #ff4757;
+  --danger-bg: rgba(255,71,87,0.15);
+  --success: #2ed573;
+  --success-bg: rgba(46,213,115,0.15);
+  --premium: #ffa502;
+  --premium-bg: rgba(255,165,2,0.12);
+  --radius: 10px;
+  --font: system-ui, -apple-system, sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── TOP BAR ── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border); min-height: 48px;
+  flex-shrink: 0;
+}
+.logo { font-weight: 700; font-size: 1.1rem; }
+.logo span { color: var(--accent); }
+.badge {
+  font-size: 0.7rem; padding: 4px 10px; border-radius: 20px;
+  font-weight: 600;
+}
+.badge.free { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.badge.premium { background: var(--premium-bg); color: var(--premium); border: 1px solid var(--premium); }
+
+/* ── MAIN LAYOUT ── */
+.main { display:flex; flex:1; overflow:hidden; }
+.sidebar { width: 240px; background: var(--surface); border-right: 1px solid var(--border);
+  display:flex; flex-direction:column; flex-shrink:0; }
+.sidebar-header {
+  padding:12px; border-bottom:1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center;
+}
+.sidebar-header h3 { font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
+.btn {
+  background: var(--accent); color: white; border: none;
+  padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  font-size: 0.75rem; font-weight: 600;
+  transition: background 0.2s;
+}
+.btn:hover { background: var(--accent-glow); }
+.btn.small { padding:4px 10px; font-size:0.7rem; }
+.btn.danger { background: var(--danger); }
+.btn.ghost {
+  background: transparent; color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.btn.premium-btn {
+  background: var(--premium); color: #000;
+}
+.file-list {
+  flex:1; overflow-y:auto; padding:6px;
+}
+.file-item {
+  display:flex; align-items:center; gap:8px; padding:8px;
+  border-radius:6px; cursor:pointer; margin-bottom:2px;
+  transition: background 0.15s;
+}
+.file-item:hover { background: rgba(108,99,255,0.08); }
+.file-item.active { background: rgba(108,99,255,0.18); }
+.file-thumb {
+  width:40px; height:40px; border-radius:4px; object-fit:cover;
+  background: var(--border); flex-shrink:0;
+}
+.file-info { flex:1; min-width:0; }
+.file-name { font-size:0.75rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.file-size { font-size:0.65rem; color:var(--muted); }
+.file-status { font-size:0.6rem; }
+.file-status.blurred { color: var(--accent); }
+
+/* ── CANVAS ── */
+.editor {
+  flex:1; display:flex; flex-direction:column; background: #080812;
+  position:relative; overflow:hidden;
+}
+.canvas-wrap {
+  flex:1; display:flex; align-items:center; justify-content:center;
+  position:relative; overflow:auto;
+}
+canvas { max-width:100%; max-height:100%; cursor:crosshair; }
+.empty-state {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  text-align:center; color:var(--muted); pointer-events:none;
+}
+.empty-state .icon { font-size:3rem; margin-bottom:8px; }
+.empty-state p { font-size:0.85rem; }
+.drop-zone {
+  position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:center; background: rgba(108,99,255,0.1);
+  border: 2px dashed var(--accent); border-radius: 8px;
+  margin: 16px; display:none; z-index:10;
+}
+.drop-zone.active { display:flex; }
+.drop-zone span { font-size:1.2rem; color:var(--accent); font-weight:600; }
+
+/* ── TOOLS BAR ── */
+.tools {
+  display:flex; gap:8px; padding:8px 16px; background: var(--surface);
+  border-top: 1px solid var(--border); align-items:center;
+  flex-shrink:0;
+}
+.tool-group { display:flex; gap:4px; align-items:center; }
+.tool-label {
+  font-size:0.7rem; color:var(--muted); margin-right:4px;
+  text-transform:uppercase; letter-spacing:0.05em;
+}
+input[type="range"] {
+  width:100px; height:4px; accent-color:var(--accent);
+}
+.zone-count {
+  font-size:0.7rem; color:var(--muted);
+  background:var(--bg); padding:4px 8px; border-radius:4px;
+}
+
+/* ── RIGHT PANEL ── */
+.panel {
+  width:260px; background:var(--surface); border-left:1px solid var(--border);
+  padding:16px; overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; gap:14px;
+}
+.panel h3 {
+  font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em;
+  color:var(--muted); margin-bottom:6px;
+}
+.setting { margin-bottom:4px; }
+.setting label { display:block; font-size:0.7rem; color:var(--muted); margin-bottom:3px; }
+.setting input, .setting select {
+  width:100%; padding:6px 10px; background:var(--bg); border:1px solid var(--border);
+  border-radius:4px; color:var(--text); font-size:0.75rem;
+}
+.setting input:focus, .setting select:focus { outline:none; border-color:var(--accent); }
+.size-presets { display:flex; gap:4px; flex-wrap:wrap; }
+.size-preset {
+  padding:3px 8px; background:var(--bg); border:1px solid var(--border);
+  border-radius:4px; font-size:0.65rem; cursor:pointer; color:var(--muted);
+}
+.size-preset:hover, .size-preset.active { border-color:var(--accent); color:var(--accent); }
+.toggle-row {
+  display:flex; align-items:center; gap:8px; font-size:0.75rem;
+}
+.toggle {
+  width:36px; height:20px; background:var(--border); border-radius:10px;
+  position:relative; cursor:pointer; transition: background 0.2s;
+}
+.toggle.on { background: var(--accent); }
+.toggle::after {
+  content:''; width:16px; height:16px; background:white; border-radius:50%;
+  position:absolute; top:2px; left:2px; transition: transform 0.2s;
+}
+.toggle.on::after { transform:translateX(16px); }
+
+/* ── PROGRESS ── */
+.progress-bar {
+  height:4px; background: var(--border); border-radius:2px; overflow:hidden;
+}
+.progress-fill {
+  height:100%; background:var(--accent); width:0%; transition: width 0.3s;
+}
+.export-btn {
+  background: var(--success); color: #000; border:none;
+  padding:10px; border-radius:8px; font-size:0.8rem; font-weight:700;
+  cursor:pointer; width:100%; margin-top:auto;
+  transition: background 0.2s;
+}
+.export-btn:hover { background: #3be080; }
+.export-btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+/* ── COLOR DOTS ── */
+.color-dot {
+  display:inline-block; width:18px; height:18px; border-radius:50%;
+  cursor:pointer; border:2px solid transparent; transition: transform 0.15s;
+  vertical-align:middle;
+}
+.color-dot:hover { transform:scale(1.2); }
+.color-dot.active { border-color: var(--accent); transform:scale(1.2); }
+
+/* ── MODE BTN ── */
+.btn.active { background: var(--accent); color: white; }
+
+/* ── TOAST ── */
+.toast {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  background:var(--surface); border:1px solid var(--border);
+  padding:10px 20px; border-radius:8px; font-size:0.8rem;
+  z-index:100; opacity:0; transition: opacity 0.3s;
+  pointer-events:none;
+}
+.toast.show { opacity:1; }
+
+/* ── MODAL ── */
+.modal-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.7);
+  display:flex; align-items:center; justify-content:center;
+  z-index:200; display:none;
+}
+.modal-overlay.show { display:flex; }
+.modal {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:24px; max-width:400px; width:90%;
+}
+.modal h2 { margin-bottom:8px; font-size:1.1rem; }
+.modal p { font-size:0.8rem; color:var(--muted); margin-bottom:16px; line-height:1.5; }
+.modal input {
+  width:100%; padding:10px; background:var(--bg); border:1px solid var(--border);
+  border-radius:6px; color:var(--text); margin-bottom:12px; font-size:0.8rem;
+}
+.modal .actions { display:flex; gap:8px; justify-content:flex-end; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo">📸 <span>PhotoBatch</span></div>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <span id="txtCount" style="font-size:0.75rem;color:var(--muted);">0 photo</span>
+    <span id="badgeLic" class="badge free">GRATUIT</span>
+    <button class="btn ghost small" onclick="showLicenseModal()">Débloquer Premium</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- LEFT: FILE LIST -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h3>Photos</h3>
+      <button class="btn small" onclick="document.getElementById('fileInput').click()">+ Ajouter</button>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" multiple hidden onchange="addFiles(this.files)">
+    <div class="file-list" id="fileList"
+         ondragover="e=>{e.preventDefault();document.getElementById('dropZone').classList.add('active')}"
+         ondragleave="e=>{document.getElementById('dropZone').classList.remove('active')}"
+         ondrop="e=>{e.preventDefault();document.getElementById('dropZone').classList.remove('active');addFiles(e.dataTransfer.files)}">
+      <div id="dropZone" class="drop-zone"><span>📁 Déposer les photos ici</span></div>
+      <div id="emptyHint" style="padding:20px;text-align:center;color:var(--muted);font-size:0.8rem;">
+        Glisse-dépose des photos<br>ou clique « + Ajouter »
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: EDITOR -->
+  <div class="editor" id="editor"
+       ondragover="e=>{e.preventDefault();e.stopPropagation();document.getElementById('editorDrop').classList.add('active')}"
+       ondragleave="e=>{e.stopPropagation();document.getElementById('editorDrop').classList.remove('active')}"
+       ondrop="e=>{e.preventDefault();e.stopPropagation();document.getElementById('editorDrop').classList.remove('active');addFiles(e.dataTransfer.files)}">
+    <div class="canvas-wrap" id="canvasWrap">
+      <div id="photoInfo" style="padding:6px 16px;font-size:0.7rem;color:var(--muted);display:none;text-align:right;">
+        📐 Original : <span id="dimOriginal">—</span>
+        &nbsp;|&nbsp; Affiché : <span id="dimDisplay">—</span>
+      </div>
+      <canvas id="mainCanvas"></canvas>
+      <div class="empty-state" id="emptyState">
+        <div class="icon">🖼️</div>
+        <p>Glisse tes photos ici</p>
+      </div>
+    </div>
+    <div id="editorDrop" class="drop-zone"><span>📁 Déposer les photos</span></div>
+  </div>
+
+  <!-- RIGHT: SETTINGS -->
+  <div class="panel">
+    <div>
+      <h3>📐 Redimensionner</h3>
+      <div class="setting">
+        <div class="size-presets" id="sizePresets">
+          <span class="size-preset" data-w="1920" data-h="1080">1920×1080</span>
+          <span class="size-preset" data-w="1200" data-h="1200">1:1 1200</span>
+          <span class="size-preset" data-w="800" data-h="600">800×600</span>
+          <span class="size-preset active" data-w="0" data-h="0" id="presetOriginal">Original</span>
+        </div>
+        <div id="dimHint" style="font-size:0.6rem;color:var(--muted);margin-top:2px;display:none;">
+          Taille actuelle : <span id="dimCur">—</span>
+        </div>
+      </div>
+      <div class="setting">
+        <label>Largeur max (px)</label>
+        <input type="number" id="resizeW" value="1200" min="100" max="8000">
+      </div>
+      <div class="setting">
+        <label>Hauteur max (px)</label>
+        <input type="number" id="resizeH" value="1200" min="100" max="8000">
+      </div>
+    </div>
+
+    <div>
+      <h3>💧 Filigrane</h3>
+      <div class="toggle-row" style="margin-bottom:8px;">
+        <div class="toggle" id="toggleWatermark" onclick="toggleWatermark()"></div>
+        <span>Activer</span>
+      </div>
+      <div class="setting" id="watermarkSettings" style="display:none;">
+        <label>Texte du filigrane</label>
+        <input type="text" id="watermarkText" value="PhotoBatch" maxlength="40">
+        <label style="margin-top:4px;">Opacité</label>
+        <input type="range" id="watermarkOpacity" min="10" max="100" value="40">
+      </div>
+    </div>
+
+    <div>
+      <h3>📝 Renommage</h3>
+      <div class="setting">
+        <label>Préfixe</label>
+        <input type="text" id="renamePrefix" value="photo_" maxlength="30">
+      </div>
+    </div>
+
+    <div>
+      <h3>💾 Format</h3>
+      <div class="setting">
+        <select id="exportFormat">
+          <option value="image/jpeg">JPEG (.jpg)</option>
+          <option value="image/png">PNG (.png)</option>
+          <option value="image/webp">WebP (.webp)</option>
+        </select>
+      </div>
+      <div class="setting">
+        <label>Qualité (JPEG/WebP)</label>
+        <input type="range" id="exportQuality" min="50" max="100" value="85">
+        <span style="font-size:0.65rem;color:var(--muted);" id="qualLabel">85%</span>
+      </div>
+    </div>
+
+    <div class="progress-bar" id="progressBar" style="display:none;">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <button class="export-btn" id="exportBtn" disabled onclick="exportAll()">
+      📦 Exporter le lot
+    </button>
+  </div>
+</div>
+
+<!-- TOOLS BAR -->
+<div class="tools" id="toolsBar">
+  <div class="tool-group">
+    <span class="tool-label">🔧 Mode</span>
+    <button class="btn small active" id="btnModeBlur" onclick="setToolMode('blur')">🖌️ Flou</button>
+    <button class="btn small" id="btnModeText" onclick="setToolMode('text')">📝 Texte</button>
+  </div>
+  <div class="tool-group" style="margin-left:12px;" id="blurTools">
+    <span class="zone-count" id="zoneCount">0</span>
+    <span class="tool-label">Force</span>
+    <input type="range" id="blurIntensity" min="3" max="40" value="15" oninput="updateBlurLabel()">
+    <span id="blurLabel" style="font-size:0.7rem;color:var(--muted);">15px</span>
+  </div>
+  <div class="tool-group" style="margin-left:12px;display:none;" id="textTools">
+    <span class="tool-label">Police</span>
+    <input type="number" id="textSize" value="28" min="8" max="200" style="width:50px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">
+    <span style="font-size:0.7rem;">px</span>
+    <span class="tool-label" style="margin-left:8px;">Couleur</span>
+    <span class="color-dot" data-color="#ff4757" style="background:#ff4757;" onclick="setTextColor('#ff4757')"></span>
+    <span class="color-dot" data-color="#ffffff" style="background:#ffffff;" onclick="setTextColor('#ffffff')"></span>
+    <span class="color-dot" data-color="#ffa502" style="background:#ffa502;" onclick="setTextColor('#ffa502')"></span>
+    <span class="color-dot" data-color="#2ed573" style="background:#2ed573;" onclick="setTextColor('#2ed573')"></span>
+    <span class="color-dot active" data-color="#000000" style="background:#000000;border-color:#6c63ff;" onclick="setTextColor('#000000')"></span>
+    <span class="zone-count" id="textZoneCount">0</span>
+  </div>
+  <div class="tool-group" style="margin-left:12px;">
+    <button class="btn small danger" id="btnClearAll" onclick="clearAllAnnotations()" disabled>✕ Tout effacer</button>
+  </div>
+  <div class="tool-group" style="margin-left:12px;">
+    <span style="font-size:0.65rem;color:var(--muted);" id="blurHint">
+      🖌️ Clic-glisse sur la photo → zone de flou
+    </span>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="licenseModal">
+  <div class="modal">
+    <h2>🔓 Débloquer Premium — 19 €</h2>
+    <p>Photos illimitées par lot · Zones de flou illimitées · Filigrane personnalisé · Pas de filigrane "Trial" · Modes d'export avancés</p>
+    <input type="text" id="licenseKey" placeholder="Clé de licence">
+    <div class="actions">
+      <button class="btn ghost small" onclick="closeLicenseModal()">Annuler</button>
+      <button class="btn premium-btn small" onclick="activateLicense()">Activer</button>
+    </div>
+    <p style="margin-top:8px;font-size:0.65rem;color:var(--muted);">
+      Pas encore de clé ? → <a href="#" style="color:var(--accent);" onclick="window.open('https://gumroad.com/l/photobatch','_blank')">Acheter sur Gumroad (19 €)</a>
+    </p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- SCRIPTS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+"use strict";
+
+// ─── STATE ─────────────────────────────────────────
+const state = {
+  files: [],       // {file, img:Image, zones:[], textZones:[], blurred:false}
+  activeIdx: -1,
+  premium: false,
+  drawing: false,
+  drawStart: null,
+  toolMode: 'blur', // 'blur' | 'text'
+  textColor: '#000000',
+  watermark: true,
+  freeLimit: 10,
+  maxZonesFree: 2,
+  maxTextFree: 3,
+};
+
+// ─── DOM REFS ──────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fileList = $('fileList');
+const canvas = $('mainCanvas');
+const ctx = canvas.getContext('2d');
+const emptyState = $('emptyState');
+const canvasWrap = $('canvasWrap');
+
+// ─── TOAST ─────────────────────────────────────────
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ─── LICENSE ───────────────────────────────────────
+function showLicenseModal() { $('licenseModal').classList.add('show'); }
+function closeLicenseModal() { $('licenseModal').classList.remove('show'); }
+function activateLicense() {
+  const key = $('licenseKey').value.trim();
+  // Simple local validation (demo: any key starting with PB-)
+  if (key.startsWith('PB-') && key.length >= 15) {
+    state.premium = true;
+    localStorage.setItem('photobatch_license', key);
+    $('badgeLic').textContent = 'PREMIUM';
+    $('badgeLic').className = 'badge premium';
+    closeLicenseModal();
+    updateUI();
+    toast('✅ Premium activé !');
+  } else {
+    toast('❌ Clé invalide');
+  }
+}
+// Load saved license
+(function() {
+  const saved = localStorage.getItem('photobatch_license');
+  if (saved && saved.startsWith('PB-')) {
+    state.premium = true;
+    $('badgeLic').textContent = 'PREMIUM';
+    $('badgeLic').className = 'badge premium';
+  }
+})();
+
+// ─── FILE MANAGEMENT ───────────────────────────────
+function addFiles(fileListInput) {
+  const newFiles = Array.from(fileListInput).filter(f => f.type.startsWith('image/'));
+  if (!newFiles.length) return toast('⚠️ Aucune image détectée');
+
+  const limit = state.premium ? Infinity : state.freeLimit;
+  const remaining = limit - state.files.length;
+  if (remaining <= 0) return toast(`⚠️ Limite gratuite : ${state.freeLimit} photos. Passe Premium pour l'illimité.`);
+
+  const toAdd = newFiles.slice(0, remaining);
+  if (newFiles.length > remaining) toast(`⚠️ Limite atteinte — ${toAdd.length}/${newFiles.length} photos ajoutées`);
+
+  toAdd.forEach((file, i) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        state.files.push({ file, img, zones: [], textZones: [], blurred: false });
+        if (state.files.length === 1) selectFile(0);
+        renderFileList();
+        updateUI();
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function selectFile(idx) {
+  state.activeIdx = idx;
+  renderFileList();
+  drawEditor();
+  updateUI();
+}
+
+function removeFile(idx) {
+  state.files.splice(idx, 1);
+  if (state.activeIdx >= state.files.length) state.activeIdx = state.files.length - 1;
+  renderFileList();
+  if (state.activeIdx >= 0) drawEditor();
+  else { ctx.clearRect(0,0,canvas.width,canvas.height); emptyState.style.display = ''; $('photoInfo').style.display = 'none'; }
+  updateUI();
+}
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  if (!state.files.length) {
+    fileList.innerHTML = '<div id="emptyHint" style="padding:20px;text-align:center;color:var(--muted);font-size:0.8rem;">Glisse-dépose des photos<br>ou clique « + Ajouter »</div>';
+    fileList.appendChild(Object.assign(document.createElement('div'),{id:'dropZone',className:'drop-zone',innerHTML:'<span>📁 Déposer les photos ici</span>'}));
+    return;
+  }
+  state.files.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.className = 'file-item' + (i === state.activeIdx ? ' active' : '');
+    const sizeMB = (f.file.size / 1024 / 1024).toFixed(1);
+    const dims = `${f.img.naturalWidth}×${f.img.naturalHeight}`;
+    div.innerHTML = `
+      <img class="file-thumb" src="${f.img.src}" alt="">
+      <div class="file-info">
+        <div class="file-name">${f.file.name}</div>
+        <div class="file-size">${dims} · ${sizeMB} MB</div>
+        ${f.zones.length ? `<div class="file-status blurred">🖌️ ${f.zones.length} flou${f.zones.length>1?'s':''}</div>` : ''}
+        ${f.textZones.length ? `<div class="file-status blurred">📝 ${f.textZones.length} texte${f.textZones.length>1?'s':''}</div>` : ''}
+      </div>
+      <button style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:0.8rem;padding:4px;"
+              onclick="event.stopPropagation();removeFile(${i})">✕</button>`;
+    div.onclick = () => selectFile(i);
+    div.ondragover = e => { e.preventDefault(); div.style.background = 'rgba(108,99,255,0.15)'; };
+    div.ondragleave = e => { div.style.background = ''; };
+    fileList.appendChild(div);
+  });
+}
+
+// ─── CANVAS EDITOR ─────────────────────────────────
+function drawEditor() {
+  if (state.activeIdx < 0) return;
+  const f = state.files[state.activeIdx];
+  const img = f.img;
+
+  // Scale to fit canvas wrap
+  const wrap = canvasWrap;
+  const maxW = wrap.clientWidth - 32;
+  const maxH = wrap.clientHeight - 56; // account for photoInfo bar
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  let w = iw, h = ih;
+  const scale = Math.min(maxW / w, maxH / h, 1);
+  w = Math.floor(w * scale); h = Math.floor(h * scale);
+
+  canvas.width = w;
+  canvas.height = h;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  // Draw image
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+
+  // Update photo info
+  emptyState.style.display = 'none';
+  $('photoInfo').style.display = '';
+  $('dimOriginal').textContent = `${iw} × ${ih} px`;
+  $('dimDisplay').textContent = `${w} × ${h} px`;
+
+  // Draw blur zones
+  f.zones.forEach(zone => {
+  drawBlurredZone(img, zone, w, h);
+  // Zone outline
+  ctx.strokeStyle = 'rgba(108, 99, 255, 0.8)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(zone.x * w, zone.y * h, zone.w * w, zone.h * h);
+  ctx.setLineDash([]);
+  // Handle dots
+  drawResizeHandles(zone, w, h);
+  });
+
+  // Draw text zones
+  f.textZones.forEach(tz => {
+  const tx = tz.x * w, ty = tz.y * h;
+  ctx.font = `${tz.size * scale}px system-ui, sans-serif`;
+  ctx.fillStyle = tz.color;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(tz.text, tx, ty);
+  // Dashed underline
+  const metrics = ctx.measureText(tz.text);
+  ctx.strokeStyle = tz.color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(tx, ty + tz.size * scale + 2);
+  ctx.lineTo(tx + metrics.width, ty + tz.size * scale + 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  });
+
+  emptyState.style.display = 'none';
+}
+
+function drawBlurredZone(img, zone, cw, ch) {
+  // Extract region from original image
+  const sx = zone.x * img.naturalWidth;
+  const sy = zone.y * img.naturalHeight;
+  const sw = zone.w * img.naturalWidth;
+  const sh = zone.h * img.naturalHeight;
+
+  const tmp1 = document.createElement('canvas');
+  tmp1.width = sw; tmp1.height = sh;
+  tmp1.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  const tmp2 = document.createElement('canvas');
+  tmp2.width = sw; tmp2.height = sh;
+  const tctx = tmp2.getContext('2d');
+  tctx.filter = `blur(${zone.intensity}px)`;
+  tctx.drawImage(tmp1, 0, 0);
+  tctx.filter = 'none';
+
+  const dx = zone.x * cw;
+  const dy = zone.y * ch;
+  const dw = zone.w * cw;
+  const dh = zone.h * ch;
+  ctx.drawImage(tmp2, dx, dy, dw, dh);
+}
+
+function drawResizeHandles(zone, cw, ch) {
+  // Simple corner dots
+  const x = zone.x * cw, y = zone.y * ch;
+  const w = zone.w * cw, h = zone.h * ch;
+  [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([px,py]) => {
+    ctx.fillStyle = 'rgba(108, 99, 255, 0.9)';
+    ctx.fillRect(px-4, py-4, 8, 8);
+  });
+}
+
+// ─── ZONE DRAWING (BLUR) ───────────────────────────
+function startZoneMode() {
+  // Legacy — removed. Drawing is now always-on in blur mode.
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (state.toolMode !== 'blur' || state.activeIdx < 0) return;
+  if (e.button !== 0) return; // left click only
+  const rect = canvas.getBoundingClientRect();
+  state.drawing = true;
+  state.drawStart = {
+    x: (e.clientX - rect.left) / canvas.width,
+    y: (e.clientY - rect.top) / canvas.height,
+  };
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!state.drawing) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / canvas.width;
+  const my = (e.clientY - rect.top) / canvas.height;
+  const sx = state.drawStart.x, sy = state.drawStart.y;
+  const f = state.files[state.activeIdx];
+
+  // Redraw with preview zone
+  drawEditor();
+  ctx.fillStyle = 'rgba(108, 99, 255, 0.25)';
+  ctx.strokeStyle = 'rgba(108, 99, 255, 0.7)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  const x = Math.min(sx, mx) * canvas.width;
+  const y = Math.min(sy, my) * canvas.height;
+  const w = Math.abs(mx - sx) * canvas.width;
+  const h = Math.abs(my - sy) * canvas.height;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!state.drawing) return;
+  state.drawing = false;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) / canvas.width;
+  const my = (e.clientY - rect.top) / canvas.height;
+  const sx = state.drawStart.x, sy = state.drawStart.y;
+
+  const x = Math.min(sx, mx);
+  const y = Math.min(sy, my);
+  const w = Math.abs(mx - sx);
+  const h = Math.abs(my - sy);
+
+  if (w < 0.01 || h < 0.01) {
+    drawEditor();
+    return; // Too small, ignore
+  }
+
+  const f = state.files[state.activeIdx];
+  const maxZ = state.premium ? Infinity : state.maxZonesFree;
+  if (f.zones.length >= maxZ) {
+    toast(`⚠️ Limite ${maxZ} zones/flou en version gratuite`);
+    drawEditor();
+    return;
+  }
+
+  f.zones.push({ x, y, w, h, intensity: parseInt($('blurIntensity').value) });
+  f.blurred = true;
+  canvas.style.cursor = 'crosshair';
+  drawEditor();
+  renderFileList();
+  updateUI();
+  toast(`✅ Zone de flou ajoutée (${f.zones.length})`);
+});
+
+// ─── TEXT CLICK HANDLER ────────────────────────────
+canvas.addEventListener('click', e => {
+  if (state.toolMode !== 'text' || state.activeIdx < 0 || state.drawing) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / canvas.width;
+  const y = (e.clientY - rect.top) / canvas.height;
+  const f = state.files[state.activeIdx];
+
+  const maxT = state.premium ? Infinity : state.maxTextFree;
+  if (f.textZones.length >= maxT) {
+    toast(`⚠️ Limite ${maxT} textes en version gratuite`);
+    return;
+  }
+
+  const text = prompt('📝 Texte à ajouter :', '');
+  if (!text || !text.trim()) return;
+
+  f.textZones.push({
+    x, y,
+    text: text.trim(),
+    size: parseInt($('textSize').value) || 28,
+    color: state.textColor,
+  });
+  f.blurred = true;
+  drawEditor();
+  renderFileList();
+  updateUI();
+  toast(`📝 Texte ajouté (${f.textZones.length})`);
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && state.drawing) {
+    state.drawing = false;
+    canvas.style.cursor = 'crosshair';
+    drawEditor();
+    toast('Annulé');
+  }
+  if (e.key === 'Delete' && state.activeIdx >= 0) {
+    const f = state.files[state.activeIdx];
+    // Remove last annotation (text first, then blur)
+    if (f.textZones.length) {
+      f.textZones.pop();
+    } else if (f.zones.length) {
+      f.zones.pop();
+    } else return;
+    drawEditor();
+    renderFileList();
+    updateUI();
+    toast('🗑️ Dernière annotation supprimée');
+  }
+});
+
+function clearAllAnnotations() {
+  if (state.activeIdx < 0) return;
+  const f = state.files[state.activeIdx];
+  f.zones = [];
+  f.textZones = [];
+  f.blurred = false;
+  drawEditor();
+  renderFileList();
+  updateUI();
+  toast('🗑️ Toutes les annotations effacées');
+}
+
+function updateBlurLabel() {
+  $('blurLabel').textContent = $('blurIntensity').value + 'px';
+}
+
+// ─── TOOL MODE SWITCH ──────────────────────────────
+function setToolMode(mode) {
+  state.toolMode = mode;
+  state.drawing = false;
+  canvas.style.cursor = mode === 'text' ? 'text' : 'crosshair';
+
+  // Toggle mode buttons
+  $('btnModeBlur').classList.toggle('active', mode === 'blur');
+  $('btnModeText').classList.toggle('active', mode === 'text');
+
+  // Toggle tool panels
+  $('blurTools').style.display = mode === 'blur' ? '' : 'none';
+  $('textTools').style.display = mode === 'text' ? '' : 'none';
+
+  // Update hint
+  $('blurHint').textContent = mode === 'blur'
+    ? '🖌️ Clic-glisse sur la photo → zone de flou'
+    : '📝 Clique sur la photo → ajouter du texte';
+
+  updateUI();
+}
+
+function setTextColor(color) {
+  state.textColor = color;
+  document.querySelectorAll('.color-dot').forEach(d => {
+    d.classList.toggle('active', d.dataset.color === color);
+  });
+}
+
+// ─── SETTINGS ──────────────────────────────────────
+function toggleWatermark() {
+  state.watermark = !state.watermark;
+  $('toggleWatermark').classList.toggle('on', state.watermark);
+  $('watermarkSettings').style.display = state.watermark ? '' : 'none';
+}
+// Init watermark toggle
+$('toggleWatermark').classList.add('on');
+$('watermarkSettings').style.display = '';
+
+// Size presets
+$('sizePresets').addEventListener('click', e => {
+  if (!e.target.classList.contains('size-preset')) return;
+  document.querySelectorAll('.size-preset').forEach(s => s.classList.remove('active'));
+  e.target.classList.add('active');
+  $('resizeW').value = e.target.dataset.w;
+  $('resizeH').value = e.target.dataset.h;
+});
+
+$('exportQuality').addEventListener('input', e => {
+  $('qualLabel').textContent = e.target.value + '%';
+});
+
+// ─── UI UPDATES ────────────────────────────────────
+function updateUI() {
+  const hasFiles = state.files.length > 0;
+  const hasActive = state.activeIdx >= 0;
+  $('exportBtn').disabled = !hasFiles;
+  $('btnClearAll').disabled = !hasActive || (!(state.files[state.activeIdx]?.zones.length) && !(state.files[state.activeIdx]?.textZones.length));
+  $('txtCount').textContent = `${state.files.length} photo${state.files.length>1?'s':''}`;
+  
+  const f = hasActive ? state.files[state.activeIdx] : null;
+  $('zoneCount').textContent = f ? `${f.zones.length}` : '0';
+  $('textZoneCount').textContent = f ? `${f.textZones.length}` : '0';
+
+  // Update resize dimension hint
+  if (f) {
+    $('dimHint').style.display = '';
+    $('dimCur').textContent = `${f.img.naturalWidth} × ${f.img.naturalHeight} px`;
+    $('presetOriginal').textContent = `Original (${f.img.naturalWidth}×${f.img.naturalHeight})`;
+  } else {
+    $('dimHint').style.display = 'none';
+    $('presetOriginal').textContent = 'Original';
+  }
+}
+
+// ─── EXPORT ────────────────────────────────────────
+async function exportAll() {
+  if (!state.files.length) return;
+  const $pb = $('progressBar'); const $pf = $('progressFill');
+  $pb.style.display = ''; $pf.style.width = '0%';
+
+  const fmt = $('exportFormat').value;
+  const quality = parseInt($('exportQuality').value) / 100;
+  const prefix = $('renamePrefix').value || 'photo_';
+  const maxW = parseInt($('resizeW').value) || 0;
+  const maxH = parseInt($('resizeH').value) || 0;
+  const wmText = state.watermark ? $('watermarkText').value : '';
+  const wmOpacity = parseInt($('watermarkOpacity').value) / 100;
+
+  const zip = new JSZip();
+  const ext = fmt === 'image/jpeg' ? '.jpg' : fmt === 'image/webp' ? '.webp' : '.png';
+
+  for (let i = 0; i < state.files.length; i++) {
+    const f = state.files[i];
+    // Create working canvas
+    const wc = document.createElement('canvas');
+    const wctx = wc.getContext('2d');
+
+    // Calculate final size
+    let fw = f.img.naturalWidth, fh = f.img.naturalHeight;
+    if (maxW && maxH) {
+      const scale = Math.min(maxW / fw, maxH / fh, 1);
+      fw = Math.floor(fw * scale); fh = Math.floor(fh * scale);
+    }
+    wc.width = fw; wc.height = fh;
+
+    // Draw image scaled
+    wctx.drawImage(f.img, 0, 0, fw, fh);
+
+    // Apply blur zones
+    f.zones.forEach(zone => {
+      const sx = zone.x * f.img.naturalWidth;
+      const sy = zone.y * f.img.naturalHeight;
+      const sw = zone.w * f.img.naturalWidth;
+      const sh = zone.h * f.img.naturalHeight;
+
+      const tmp1 = document.createElement('canvas');
+      tmp1.width = sw; tmp1.height = sh;
+      tmp1.getContext('2d').drawImage(f.img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      const tmp2 = document.createElement('canvas');
+      tmp2.width = sw; tmp2.height = sh;
+      const tctx = tmp2.getContext('2d');
+      tctx.filter = `blur(${zone.intensity}px)`;
+      tctx.drawImage(tmp1, 0, 0);
+      tctx.filter = 'none';
+
+      const dx = zone.x * fw;
+      const dy = zone.y * fh;
+      const dw = zone.w * fw;
+      const dh = zone.h * fh;
+      wctx.drawImage(tmp2, dx, dy, dw, dh);
+    });
+
+    // Apply text zones
+    f.textZones.forEach(tz => {
+      const tx = tz.x * fw;
+      const ty = tz.y * fh;
+      const tScale = fw / f.img.naturalWidth;
+      wctx.font = `${tz.size * tScale}px system-ui, sans-serif`;
+      wctx.fillStyle = tz.color;
+      wctx.textAlign = 'left';
+      wctx.textBaseline = 'top';
+      // Draw shadow for readability on any background
+      wctx.shadowColor = 'rgba(0,0,0,0.5)';
+      wctx.shadowBlur = 3;
+      wctx.fillText(tz.text, tx, ty);
+      wctx.shadowColor = 'transparent';
+      wctx.shadowBlur = 0;
+    });
+
+    // Watermark
+    if (wmText) {
+      wctx.fillStyle = `rgba(255,255,255,${wmOpacity})`;
+      wctx.font = `${Math.max(14, fw/20)}px system-ui`;
+      wctx.textAlign = 'center';
+      wctx.fillText(wmText, fw/2, fh - 20);
+      // Trial watermark for free users
+      if (!state.premium) {
+        wctx.fillStyle = `rgba(255,255,255,${wmOpacity*0.6})`;
+        wctx.font = `${Math.max(10, fw/35)}px system-ui`;
+        wctx.fillText('Trial · photobatch.io', fw/2, fh - 40);
+      }
+    }
+
+    // Get blob
+    const blob = await new Promise(resolve => wc.toBlob(resolve, fmt, quality));
+    const name = `${prefix}${String(i+1).padStart(3,'0')}${ext}`;
+    zip.file(name, blob, { binary: true });
+
+    $pf.style.width = `${Math.round((i+1)/state.files.length*100)}%`;
+  }
+
+  // Generate ZIP
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'photobatch_export.zip';
+  a.click();
+  URL.revokeObjectURL(url);
+
+  $pb.style.display = 'none';
+  toast(`✅ ${state.files.length} photos exportées !`);
+}
+
+// ─── SERVICE WORKER ────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+
+// ─── INIT ──────────────────────────────────────────
+updateUI();
+$('toggleWatermark').classList.remove('on');
+$('watermarkSettings').style.display = 'none';
+state.watermark = false;
+</script>
+
+</body>
+</html>
