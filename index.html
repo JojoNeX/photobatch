@@ -233,6 +233,7 @@ input[type="range"] {
 }
 .modal .actions { display:flex; gap:8px; justify-content:flex-end; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 </head>
 <body>
 
@@ -255,7 +256,7 @@ input[type="range"] {
       <h3>Photos</h3>
       <button class="btn small" onclick="document.getElementById('fileInput').click()">+ Ajouter</button>
     </div>
-    <input type="file" id="fileInput" accept="image/*" multiple hidden onchange="addFiles(this.files)">
+    <input type="file" id="fileInput" accept="image/*,.heic,.heif,.avif,.bmp,.svg,.tiff,.tif,.webp" multiple hidden onchange="addFiles(this.files)">
     <div class="file-list" id="fileList"
          ondragover="e=>{e.preventDefault();document.getElementById('dropZone').classList.add('active')}"
          ondragleave="e=>{document.getElementById('dropZone').classList.remove('active')}"
@@ -404,6 +405,10 @@ input[type="range"] {
       <button class="btn ghost small" onclick="closeLicenseModal()">Annuler</button>
       <button class="btn premium-btn small" onclick="activateLicense()">Activer</button>
     </div>
+    <div class="actions" style="margin-top:8px;display:none;" id="licenseActions">
+      <button class="btn ghost small" onclick="exportLicense()">📤 Exporter (.lic)</button>
+      <button class="btn ghost small" onclick="importLicense()">📥 Importer (.lic)</button>
+    </div>
     <p style="margin-top:8px;font-size:0.65rem;color:var(--muted);">
       Pas encore de clé ? → <a href="#" style="color:var(--accent);" onclick="window.open('https://gentiljojo.gumroad.com/l/nmtmey','_blank')">Acheter sur Gumroad (19 €)</a>
     </p>
@@ -449,7 +454,6 @@ function toast(msg) {
 }
 
 // ─── LICENSE ───────────────────────────────────────
-function showLicenseModal() { $('licenseModal').classList.add('show'); }
 function closeLicenseModal() { $('licenseModal').classList.remove('show'); }
 
 function validateLicenseKey(key) {
@@ -484,9 +488,63 @@ function activateLicense() {
     closeLicenseModal();
     updateUI();
     toast('✅ Premium activé !');
+    // Auto-save to disk
+    saveLicenseToDisk(key);
   } else {
     toast('❌ Clé invalide. Format : PB-XXXX-XXXX-XXXX');
   }
+}
+
+function exportLicense() {
+  const key = localStorage.getItem('photobatch_license');
+  if (!key) return toast('⚠️ Aucune licence sauvegardée');
+  saveLicenseToDisk(key);
+  toast('📤 Licence exportée → photobatch.lic');
+}
+
+function saveLicenseToDisk(key) {
+  const blob = new Blob([key], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'photobatch.lic';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function importLicense() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.lic,.txt';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const key = ev.target.result.trim();
+      if (validateLicenseKey(key)) {
+        state.premium = true;
+        localStorage.setItem('photobatch_license', key);
+        $('badgeLic').textContent = 'PREMIUM';
+        $('badgeLic').className = 'badge premium';
+        $('licenseKey').value = key;
+        toast('📥 Licence importée et activée !');
+        updateUI();
+      } else {
+        toast('❌ Fichier invalide — clé non reconnue');
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function showLicenseModal() {
+  $('licenseModal').classList.add('show');
+  // Show export/import if already premium
+  $('licenseActions').style.display = state.premium ? '' : 'none';
+  // Pre-fill current key
+  const saved = localStorage.getItem('photobatch_license');
+  if (saved) $('licenseKey').value = saved;
 }
 // Load saved license
 (function() {
@@ -499,31 +557,56 @@ function activateLicense() {
 })();
 
 // ─── FILE MANAGEMENT ───────────────────────────────
-function addFiles(fileListInput) {
-  const newFiles = Array.from(fileListInput).filter(f => f.type.startsWith('image/'));
-  if (!newFiles.length) return toast('⚠️ Aucune image détectée');
+async function addFiles(fileListInput) {
+  const rawFiles = Array.from(fileListInput);
+  
+  // Filter: accept image MIME types OR known image extensions
+  const imageExts = /\.(heic|heif|avif|bmp|svg|tiff|tif|webp|jpg|jpeg|png|gif)$/i;
+  const validFiles = rawFiles.filter(f => 
+    f.type.startsWith('image/') || imageExts.test(f.name)
+  );
+  
+  if (!validFiles.length) return toast('⚠️ Aucune image détectée. Formats supportés : JPG, PNG, HEIC, AVIF, WebP, BMP, SVG, TIFF');
 
   const limit = state.premium ? Infinity : state.freeLimit;
   const remaining = limit - state.files.length;
   if (remaining <= 0) return toast(`⚠️ Limite gratuite : ${state.freeLimit} photos. Passe Premium pour l'illimité.`);
 
-  const toAdd = newFiles.slice(0, remaining);
-  if (newFiles.length > remaining) toast(`⚠️ Limite atteinte — ${toAdd.length}/${newFiles.length} photos ajoutées`);
+  const toAdd = validFiles.slice(0, remaining);
+  if (validFiles.length > remaining) toast(`⚠️ Limite atteinte — ${toAdd.length}/${validFiles.length} photos ajoutées`);
 
-  toAdd.forEach((file, i) => {
+  for (const file of toAdd) {
+    let processedFile = file;
+    
+    // Convert HEIC/HEIF to PNG blob
+    if (/\.(heic|heif)$/i.test(file.name)) {
+      try {
+        toast('🔄 Conversion HEIC en cours...');
+        const blob = await heic2any({ blob: file, toType: 'image/png' });
+        const pngBlob = Array.isArray(blob) ? blob[0] : blob;
+        processedFile = new File([pngBlob], file.name.replace(/\.(heic|heif)$/i, '.png'), { type: 'image/png' });
+        toast('✅ HEIC converti en PNG');
+      } catch (e) {
+        toast('⚠️ Échec conversion HEIC : ' + file.name);
+        continue;
+      }
+    }
+    
+    // Load into Image
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        state.files.push({ file, img, zones: [], textZones: [], blurred: false });
+        state.files.push({ file: processedFile, img, zones: [], textZones: [], blurred: false });
         if (state.files.length === 1) selectFile(0);
         renderFileList();
         updateUI();
       };
+      img.onerror = () => toast('⚠️ Impossible de charger : ' + processedFile.name);
       img.src = e.target.result;
     };
-    reader.readAsDataURL(file);
-  });
+    reader.readAsDataURL(processedFile);
+  }
 }
 
 function selectFile(idx) {
@@ -546,7 +629,7 @@ function renderFileList() {
   fileList.innerHTML = '';
   if (!state.files.length) {
     fileList.innerHTML = '<div id="emptyHint" style="padding:20px;text-align:center;color:var(--muted);font-size:0.8rem;">Glisse-dépose des photos<br>ou clique « + Ajouter »</div>';
-    fileList.appendChild(Object.assign(document.createElement('div'),{id:'dropZone',className:'drop-zone',innerHTML:'<span>📁 Déposer les photos ici</span>'}));
+    fileList.appendChild(Object.assign(document.createElement('div'),{id:'dropZone',className:'drop-zone',innerHTML:'<span>📁 Déposer les photos ici</span><br><span style="font-size:0.6rem;color:var(--muted);">JPG · PNG · HEIC · AVIF · WebP · BMP · SVG · TIFF</span>'}));
     return;
   }
   state.files.forEach((f, i) => {
